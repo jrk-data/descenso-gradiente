@@ -1,0 +1,175 @@
+---
+title: "EDA Kaggle Dataset"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+if(!require(tidyverse)) install.packages("tidyverse")
+if(!require(corrplot)) install.packages("corrplot")
+if(!require(gplots)) install.packages('gplots')
+if(!require(car)) install.packages("car")
+
+```
+
+```{r}
+library(tidyverse)
+library(FactoMineR)
+library(factoextra)
+library(gmodels)
+library(vcdExtra)
+library(skimr)
+library(corrplot)
+library(car)
+library(dplyr)
+```
+
+```{r}
+# ---------------------------------------------------------
+# Script: EDA y Preparación para Descenso del Gradiente
+# Autor: EEA Data Scientist
+# Dataset: King County House Sales
+# ---------------------------------------------------------
+
+# 1. Carga de Librerías
+
+# 2. Carga de Datos
+# Asegúrate de que el archivo esté en tu directorio de trabajo
+df <- read_csv("App/kc_house_data.csv")
+
+```
+```{r}
+# Generar un resumen limpio
+tabla_nulos <- df %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Variable", values_to = "Nulos") %>%
+  arrange(desc(Nulos)) # Ordenamos (aunque todos sean 0)
+
+print(tabla_nulos)
+```
+
+```{r}
+# 2. Selección de variables numéricas relevantes
+# Excluimos ID, Date y Zipcode porque no son variables continuas estándar
+vars_to_plot <- df %>%
+  select(price, bedrooms, bathrooms, sqft_living, sqft_lot, 
+         floors, grade, sqft_above, sqft_basement, lat, long)
+
+# 3. Transformación a formato largo (Pivoting)
+# Esto pone todas las variables en una sola columna 'key' y sus valores en 'value'
+df_long <- vars_to_plot %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Valor")
+
+# 4. Generar el Gráfico de Boxplots Facetados
+ggplot(df_long, aes(x = Variable, y = Valor, fill = Variable)) +
+  geom_boxplot(outlier.colour = "red", outlier.shape = 1) +
+  facet_wrap(~Variable, scales = "free") + # 'scales = free' es VITAL aquí
+  labs(title = "Detección de Outliers en Variables Clave",
+       subtitle = "Los puntos rojos indican valores atípicos",
+       y = "Valores",
+       x = "") +
+  theme_minimal() +
+  theme(legend.position = "none", # Ocultamos leyenda porque es redundante
+        axis.text.x = element_blank()) # Ocultamos texto eje X para limpieza
+```
+```{r}
+
+ggplot(df, aes(x = sqft_living, y = price)) +
+  # AQUI está el cambio: color fijo fuera de aes()
+  geom_point(alpha = 0.5, color = "#5d83ae") + 
+  
+  scale_y_continuous(labels = scales::comma) +
+  labs(title = "Relación: Tamaño de vivienda vs Precio",
+       x = "Superficie habitable",
+       y = "Precio (USD)") + 
+  theme_minimal() +
+  theme(legend.position = "none") 
+```
+```{r}
+ggplot(df, aes(x = lat, y = price)) +
+  # CAMBIO: Usamos el código HEX en lugar del nombre "teal"
+  geom_point(alpha = 0.4, color = "#008080") + 
+  
+  scale_y_continuous(labels = scales::comma) + 
+  labs(title = "Relación: Precio vs Latitud",
+       subtitle = "La ubicación importa: Nota el pico de precios en la zona 47.6 (Seattle Norte/Medina)",
+       x = "Latitud",
+       y = "Precio (USD)") +
+  theme_minimal()
+```
+
+```{r}
+# 2. Gráfico
+ggplot(df, aes(x = factor(bedrooms), y = sqft_living)) +
+  geom_boxplot(fill = "#69b3a2", alpha = 0.7, outlier.colour = "red", outlier.size = 1) +
+  labs(title = "Relación: Tamaño de la Propiedad vs Habitaciones",
+       subtitle = "Superficie en pies ",
+       x = "Cantidad de Habitaciones",
+       y = "Superficie Habitable") +
+  theme_minimal() +
+  scale_y_continuous(breaks = seq(0, 15000, by = 1000)) # Escala cada 100m2
+```
+
+
+```{r}
+# 4. Análisis de Correlación con el Target
+# Seleccionamos solo columnas numéricas para la correlación
+numeric_vars <- df %>% select_if(is.numeric)
+
+# Matriz de correlación
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+
+# Enfocarnos en la correlación con 'price' y ordenar descendente
+price_cor <- cor_matrix[,'price']
+price_cor_sorted <- sort(price_cor, decreasing = TRUE)
+
+print("Correlación de variables con el Precio:")
+print(price_cor_sorted)
+
+# Visualización de la Correlación (Heatmap)
+corrplot(cor_matrix, method = "color", type = "upper", 
+         tl.col = "black", tl.cex = 0.6)
+
+
+```
+
+```{r}
+
+
+# 1. Preparar los datos (Sin Nulos y solo numéricos)
+datos_vif <- df %>%
+  select(-id, -date, -zipcode) # Quitamos identificadores
+
+# 2. Crear un modelo "tonto" con todas las variables
+# El VIF se calcula SOBRE un modelo de regresión.
+modelo_full <- lm(price ~ ., data = datos_vif)
+
+# 3. Calcular VIF
+# Nota: Si hay colinealidad perfecta (aliased coefficients), R dará error.
+# Por eso, primero quitamos las redundantes detectadas:
+modelo_limpio <- lm(price ~ . -sqft_above -sqft_basement, data = datos_vif)
+
+vif_valores <- vif(modelo_limpio)
+
+print("Valores VIF:")
+vif_valores_ordenados <- sort(vif_valores, decreasing = TRUE)
+vif_df <- data.frame(Variable = names(vif_valores_ordenados), VIF = vif_valores_ordenados)
+```
+```{r}
+ggplot(vif_df, aes(x = reorder(Variable, VIF), y = VIF)) +
+  geom_bar(stat = "identity", fill = "#69b3a2", alpha = 0.8) +
+  geom_hline(yintercept = 5, linetype = "dashed", color = "orange", size = 1) +
+  geom_hline(yintercept = 10, linetype = "dashed", color = "red", size = 1) +
+  geom_text(aes(label = round(VIF, 2)), hjust = -0.2, size = 3.5) +
+  coord_flip() + # Girar para hacerlo horizontal
+  labs(title = "Diagnóstico de Multicolinealidad (VIF)",
+       subtitle = "Variables < 5 son seguras. > 10 son críticas.",
+       x = "Variables",
+       y = "Valor VIF") +
+  theme_minimal() +
+  annotate("text", x = 1, y = 5.5, label = "Precaución", color = "orange") +
+  annotate("text", x = 1, y = 10.5, label = "Peligro", color = "red")
+```
+

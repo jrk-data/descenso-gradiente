@@ -5,7 +5,7 @@ account: eij21r-joaco
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 16195385
-bundleId: 11249999
+bundleId: 11306204
 url: https://eij21r-joaco.shinyapps.io/EEA_ejemplo_dg/
 version: 1
 asMultiple: FALSE
